@@ -8,6 +8,8 @@
 
 [꼼짝마차 3.1.0 Release APK 다운로드](https://github.com/Controllls/stopcar/raw/refs/heads/main/apk/stopcar-3.1.0-release.apk) · [파일 및 검증 정보](apk/release-info.json)
 
+저장소 내 APK 위치: [`apk/stopcar-3.1.0-release.apk`](apk/stopcar-3.1.0-release.apk)
+
 크기 **26.95MB** · 릴리즈 서명 검증 완료 · `debuggable=false` · Pleos 에뮬레이터 기기 테스트 **6개 통과**.
 
 ```powershell
@@ -61,6 +63,19 @@ adb shell am start --user current -n com.example.careway/.MainActivity
 앱 코드에는 AndroidX·Compose·Coroutines를 직접 사용하지 않는다. Pleos SDK의 전이 의존성에 포함된 AndroidX·Coroutines는 유지한다.
 
 차량 입력 → 상황 판단 → 안내·제어 요청 → 실제 값 확인 → 기록·복원 순서로 처리한다. 차량 통신은 작업 스레드에서 실행하고, 반응 측정과 화면 갱신은 메인 스레드에서 처리한다.
+
+## 테스트 환경 및 필요한 설정
+
+| 항목 | 설정 |
+|---|---|
+| 개발·실행 에뮬레이터 | Pleos Connect Emulator **v2.1.0** |
+| 시스템 이미지 | Android 14(API 34), x86_64 |
+| 화면 규격 | **2560×1440px, 160dpi**, 가로 화면 |
+| 실행 사용자 | user 10 |
+| 개발 호스트 | Windows, Android Studio |
+| 차량 연동 | Pleos 차량·내비게이션·음성 서비스 및 기능별 권한 |
+
+반응 측정은 완전 정차·P단·주차 브레이크·UX 조작 허용·브레이크 이벤트 수신이 필요하다. 시뮬레이션 모드는 가상 차량 입력으로 실행한다.
 
 ## 빌드 및 실행
 
