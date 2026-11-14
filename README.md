@@ -2,6 +2,19 @@
 
 출발 전 브레이크 반응시간을 기록하고, 야간·우천·터널 등 주행 환경에 따라 차량 설정을 조절하는 Pleos Connect 앱.
 
+## APK 다운로드
+
+[꼼짝마차 3.1.0 Release APK 다운로드](https://github.com/Controllls/stopcar/raw/refs/heads/main/apk/stopcar-3.1.0-release.apk) · [파일 및 검증 정보](apk/release-info.json)
+
+크기 **26.95MB** · 릴리즈 서명 검증 완료 · `debuggable=false` · Pleos 에뮬레이터 기기 테스트 **6개 통과**.
+
+```powershell
+adb install -r apk/stopcar-3.1.0-release.apk
+adb shell am start --user current -n com.example.careway/.MainActivity
+```
+
+릴리즈 전용 키로 서명한 APK다. 기존 Debug 앱과 서명이 달라 덮어쓸 수 없다. Debug 앱이 설치된 기기는 기록을 내보낸 뒤 기존 앱을 제거하고 설치한다.
+
 ## 주요 기능
 
 | 기능 | 동작 |
@@ -63,6 +76,8 @@ SDK 경로를 `local.properties` 또는 `ANDROID_HOME`에 설정한다. Gradle W
 adb install -r careway\build\outputs\apk\debug\careway-debug.apk
 adb shell am start --user current -n com.example.careway/.MainActivity
 ```
+
+릴리즈 빌드: `.\gradlew.bat :careway:assembleRelease`. 서명 설정은 저장소 외부의 `~/.gradle/stopcar-release.properties` 또는 `-PstopcarSigningFile=경로`로 지정한다. 필드는 `storeFile`, `storePassword`, `keyAlias`, `keyPassword`이며, 설정이 없으면 서명되지 않은 APK가 생성된다.
 
 ## 기능 실행
 

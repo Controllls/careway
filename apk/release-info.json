@@ -1,0 +1,34 @@
+{
+  "application_id": "com.example.careway",
+  "version_name": "3.1.0",
+  "version_code": 5,
+  "build_type": "release",
+  "debuggable": false,
+  "test_only": false,
+  "min_sdk": 28,
+  "target_sdk": 37,
+  "file": "stopcar-3.1.0-release.apk",
+  "bytes": 26953971,
+  "sha256": "20b00e5396d37b1d481c7078318aa4bb6f4334041f96d5cc214232c99a556659",
+  "signing": {
+    "verified": true,
+    "scheme": "v2",
+    "certificate_sha256": "3cc90b2695af9c6fead8d45160a654801fde50bea237eafa3ed27a0ba8313e18",
+    "key_algorithm": "RSA",
+    "key_bits": 3072
+  },
+  "validation": {
+    "device": "Pleos emulator-5562, user 10",
+    "release_device_tests": 6,
+    "result": "passed",
+    "lint": {
+      "Error": 0,
+      "Warning": 18
+    },
+    "unit_tests_in_source_version": 36
+  },
+  "limitations": [
+    "Physical vehicle not tested",
+    "SDK transitive JNA 16KB page alignment warning remains"
+  ]
+}

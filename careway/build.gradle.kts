@@ -1,5 +1,14 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
+}
+
+// Private signing configuration lives outside the repository.
+val releaseSigningFile = file(providers.gradleProperty("stopcarSigningFile")
+    .getOrElse("${gradle.gradleUserHomeDir}/stopcar-release.properties"))
+val releaseSigning = Properties().apply {
+    if (releaseSigningFile.isFile) releaseSigningFile.inputStream().use { load(it) }
 }
 
 // This project's AGP/Kotlin combination loses unchanged top-level declarations on incremental
@@ -23,6 +32,21 @@ android {
         testInstrumentationRunner = "com.example.careway.NativeTestRunner"
     }
     buildFeatures { buildConfig = true }
+    signingConfigs {
+        if (releaseSigningFile.isFile) create("release") {
+            storeFile = file(releaseSigning.getProperty("storeFile"))
+            storePassword = releaseSigning.getProperty("storePassword")
+            keyAlias = releaseSigning.getProperty("keyAlias")
+            keyPassword = releaseSigning.getProperty("keyPassword")
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isDebuggable = false
+            isMinifyEnabled = false
+            if (releaseSigningFile.isFile) signingConfig = signingConfigs.getByName("release")
+        }
+    }
     lint {
         // AGP 9.4.1's WebView detector crashes in Kotlin UAST (Unexpected owner function: null).
         // This module has no WebView. Keep all other lint checks and abortOnError enabled.

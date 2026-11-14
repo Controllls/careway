@@ -42,7 +42,7 @@ class NativeTestRunner : Instrumentation() {
         try {
             prefs.edit().putBoolean("live_input",false).putBoolean("voice",false).putBoolean("night",true).putBoolean("rain",true).putBoolean("tunnel",true).commit()
             activity=startActivitySync(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
-            await("Activity ready") { activity.model.state.value.foreground && activity.model.state.value.capabilities.size==Control.entries.size }
+            await("Activity ready") { activity.hasWindowFocus() && activity.model.state.value.foreground && activity.model.state.value.capabilities.size==Control.entries.size }
             // Start from driving/disconnected simulation, then use the actual dashboard button.
             ui { activity.model.scenario(DemoScenario.DISCONNECTED) }
             click("open_start_reaction")
@@ -113,7 +113,9 @@ class NativeTestRunner : Instrumentation() {
             output.putString("stream","OK ($count tests)\n")
         } catch(e:Throwable) {
             code=Activity.RESULT_CANCELED
-            output.putString("stream","FAILURES!!!\n${e.stackTraceToString()}")
+            var diagnostic=""
+            if(::activity.isInitialized) ui { diagnostic="focus=${activity.hasWindowFocus()}, foreground=${activity.model.state.value.foreground}, reaction=${activity.model.state.value.reaction}" }
+            output.putString("stream","FAILURES!!!\n$diagnostic\n${e.stackTraceToString()}")
         } finally {
             if(::activity.isInitialized) ui { activity.finish() }
             prefs.edit().apply { saved.forEach { (k,v)->if(v==null)remove(k) else putBoolean(k,v) } }.commit()
