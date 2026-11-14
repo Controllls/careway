@@ -5,23 +5,19 @@ import ai.pleos.playground.vehicle.api.model.area.*
 import ai.pleos.playground.vehicle.api.model.capability.*
 import ai.pleos.playground.vehicle.constant.area.*
 import com.example.careway.core.*
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.TimeoutCancellationException
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 import com.example.careway.vehicle.SdkCalls.call as sdkCall
 
+/** SDK callbacks complete a bounded future on a worker thread; never wait on the UI thread. */
 internal object SdkCalls {
-    suspend fun <T> call(call: ((T) -> Unit, (Exception) -> Unit) -> Unit): T = withTimeout(2_500) {
-        suspendCancellableCoroutine { c ->
-            val completed = AtomicBoolean(false)
-            try { call({ if (completed.compareAndSet(false, true) && c.isActive) c.resume(it) },
-                { if (completed.compareAndSet(false, true) && c.isActive) c.resumeWithException(it) }) }
-            catch (e: Exception) { if (completed.compareAndSet(false, true) && c.isActive) c.resumeWithException(e) }
-        }
+    fun <T> call(call: ((T) -> Unit, (Exception) -> Unit) -> Unit): T {
+        check(android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) { "SDK wait on UI thread" }
+        val result = java.util.concurrent.CompletableFuture<T>()
+        try { call({ result.complete(it) }, { result.completeExceptionally(it) }) }
+        catch (e: Exception) { result.completeExceptionally(e) }
+        try { return result.get(2500, java.util.concurrent.TimeUnit.MILLISECONDS) }
+        catch (e: java.util.concurrent.ExecutionException) { throw (e.cause as? Exception ?: e) }
+        finally { result.cancel(false) }
     }
 }
 
@@ -34,7 +30,7 @@ class PleosGateway(private val vehicle: Vehicle) : VehicleGateway {
     private var ambientSeat = SeatArea(SeatValue.ROW_1_LEFT)
     private var powerSeat = SeatArea(SeatValue.ROW_1_LEFT)
 
-    override suspend fun capability(control: Control): Capability = when (control) {
+    override fun capability(control: Control): Capability = when (control) {
         Control.HVAC_POWER -> {
             val (config, areas) = sdkCall<Pair<CapabilityConfig, List<SeatArea>>> { ok, fail ->
                 vehicle.getHVAC().checkHvacPowerCapabilities({ c, a -> ok(c to a) }, fail)
@@ -88,7 +84,7 @@ class PleosGateway(private val vehicle: Vehicle) : VehicleGateway {
     private fun mirror(c: Control) = if (c == Control.MIRROR_LEFT) left else right
     private fun window(c: Control) = if (c == Control.GLASS_FRONT) front else roof
 
-    override suspend fun read(control: Control): Int {
+    override fun read(control: Control): Int {
         val value: Int? = when (control) {
             Control.HVAC_POWER -> sdkCall<Boolean?> { ok, fail -> vehicle.getHVAC().getHvacPowerState(powerSeat, ok, fail) }?.let { if (it) 1 else 0 }
             Control.DEFROST -> sdkCall<Boolean?> { ok, fail -> vehicle.getHVAC().getHvacDefrosterState(front, ok, fail) }?.let { if (it) 1 else 0 }
@@ -100,7 +96,7 @@ class PleosGateway(private val vehicle: Vehicle) : VehicleGateway {
         return requireNotNull(value) { "현재 설정을 읽지 못했습니다. 자동 제어를 보류합니다" }
     }
 
-    override suspend fun write(control: Control, value: Int) {
+    override fun write(control: Control, value: Int) {
         try { sdkCall<Unit> { ok, fail ->
             when (control) {
                 Control.HVAC_POWER -> vehicle.getHVAC().setHvacPower(powerSeat, value != 0, { _, _ -> ok(Unit) }, fail)
@@ -111,10 +107,12 @@ class PleosGateway(private val vehicle: Vehicle) : VehicleGateway {
                 Control.GLASS_FRONT, Control.GLASS_ROOF -> vehicle.getWindow().setSmartGlassLevel(window(control), value, { _, _ -> ok(Unit) }, fail)
             }
         }
-        } catch (_: TimeoutCancellationException) { /* The state may have changed despite a lost acknowledgment. Read it back. */ }
+        } catch (_: java.util.concurrent.TimeoutException) { /* The state may have changed despite a lost acknowledgment. Read it back. */ }
         // Set acknowledgment can precede VHAL propagation. Await the actual value, with a bound.
-        withTimeout(12_000) {
-            while (read(control) != value) delay(500)
+        val deadline = android.os.SystemClock.elapsedRealtime() + 12_000
+        while (read(control) != value) {
+            if (android.os.SystemClock.elapsedRealtime() >= deadline) throw java.util.concurrent.TimeoutException("차량 적용 확인 시간 초과")
+            Thread.sleep(500)
         }
     }
 }

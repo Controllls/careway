@@ -4,7 +4,7 @@
 
 동물이 도로에 나타나는 짧은 반응 체크로 출발 전 기록을 남깁니다. 주행을 시작하면 야간 미점등, 와이퍼 작동, 터널 접근 정보를 바탕으로 안내하고, 지원되는 차량 장치에 공조·조명·미러 설정 변경을 요청합니다. 사용자는 케어를 중지하고 기록을 확인하거나 공유할 수 있습니다.
 
-현대자동차그룹 차량용 앱 개발 공모전 참가 준비 프로젝트 · 현재 버전 **3.0.1**
+현대자동차그룹 차량용 앱 개발 공모전 참가 준비 프로젝트 · 현재 버전 **3.1.0**
 
 [화면 보기](#화면) · [시연 순서](#시연-순서) · [실행 방법](#실행과-조작) · [SDK와 의존성](#sdk와-의존성) · [검증 상태](#검증-상태)
 
@@ -102,21 +102,23 @@ Android Studio에서 저장소를 열고 `careway` 모듈을 실행합니다. An
 - Pleos NaviHelper **3.0.5**: 초기화 후 이벤트 등록, TBT·경로 취소·재탐색.
 - Pleos TextToSpeech **3.3.1**: ON_DEVICE·Locale.KOREA·합성 이벤트.
 - Android AAOS: CarPropertyManager의 속도·기어·주차 브레이크·NIGHT_MODE, CarUxRestrictionsManager.
-- AndroidX·Compose·Material3·Lifecycle·Coroutines 직접 의존성과 SDK 전이 의존성 유지. **Pleos SDK만으로 구성된 APK는 아닙니다.**
+- 앱의 AndroidX·Compose·Coroutines 직접 의존성 및 import를 제거했습니다. 기본 Activity·View·Canvas, 일반 상태 객체, Handler·Executor·SDK 콜백으로 구현합니다. **SDK가 내부적으로 가져오는 AndroidX·Coroutines 전이 의존성은 유지합니다. AAOS도 유지합니다.**
 - SDK의 INTERNET 권한이 병합됩니다. 자체 서버·비공개 콘솔 HTTP 호출, Vehicle의 숨겨진 getGear, PRIVATE_CAR_SAFETY는 사용하지 않습니다.
 
 공식 근거: [공모전 SDK](https://appdevchallenge.auto-hmg.io/faq), [AAOS 정책](https://document.pleos.ai/docs/pleos-only/vehicle-app-planning-guide/pleos-connect-sdk-api), [가용성](https://document.pleos.ai/docs/pleos-only/vehicle-app-planning-guide/api-compatibility-availability), [TTS 등록](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/TextToSpeech/app-registration), [언어/지역](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/TextToSpeech/set-locale).
 
 ## 검증 상태
 
-3.0.1 로컬 검증: 단위 테스트 35개, 에뮬레이터 UI 테스트 4개 통과. Lint 오류 0, 경고 34. 물리 차량 주행 시험은 하지 않았습니다.
+3.1.0 로컬 검증: 단위 테스트 **36개**, 기본 Android 기기 테스트 **6개** 통과. Lint 오류 **0**, 경고 **20**. [검증 요약·의존성·APK SHA-256](docs/validation-3.1.0.json). 물리 차량 주행 시험은 하지 않았습니다.
 
 ```powershell
 .\gradlew.bat :careway:testDebugUnitTest :careway:lintDebug :careway:assembleDebug
-.\gradlew.bat :careway:connectedDebugAndroidTest
+.\gradlew.bat :careway:assembleDebugAndroidTest
+adb install -r careway\build\outputs\apk\androidTest\debug\careway-debug-androidTest.apk
+adb shell am instrument --user current -w com.example.careway.test/com.example.careway.NativeTestRunner
 ```
 
-기기 테스트는 Pleos 서비스가 준비된 에뮬레이터가 필요합니다. `SdkIntegrationTest`는 차량 제어·복원을 시험하므로 시험용 환경에서 실행합니다.
+기기 테스트는 Pleos 서비스가 준비된 에뮬레이터가 필요합니다. `NativeTestRunner`는 기본 Android Instrumentation으로 화면·복원 시뮬레이션·기록 이전·Activity 재생성·실제 SDK 읽기·모드 전환을 검사합니다. 실제 차량 제어 명령은 시험하지 않습니다.
 
 실제 SDK 관찰에서 양쪽 미러 변경·복원을 확인했습니다. 공조·제상·내외기·실내 조명은 요청 성공 응답 후에도 값 변경을 확인하지 못했습니다. 스마트글라스는 에뮬레이터에서 미지원이었습니다. 터널 출구·역광은 시뮬레이션으로 확인했습니다. SDK 전이 의존성 JNA의 16KB 페이지 호환성 경고가 남습니다.
 
@@ -124,7 +126,7 @@ Android Studio에서 저장소를 열고 `careway` 모듈을 실행합니다. An
 
 ```text
 careway/src/main/java/com/example/careway/
-  CareViewModel.kt    화면 상태와 케어·측정 흐름
+  CareController.kt    화면 상태 객체·Handler와 케어·측정 흐름
   core/              반응 측정, 환경 판단, 제어·복원 정책
   vehicle/           Pleos·AAOS 연결, 음성, 시뮬레이션 입력
   data/              로컬 기록 저장, 30일 집계, 내보내기

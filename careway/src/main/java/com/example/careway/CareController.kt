@@ -4,15 +4,9 @@ import android.app.Application
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.SystemClock
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import com.example.careway.core.*
 import com.example.careway.data.*
 import com.example.careway.vehicle.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlin.random.Random
 
 data class CareUiState(
@@ -44,18 +38,32 @@ data class CareUiState(
     val canConfigure get() = demo || (parked && snapshot.uxRestricted?.fresh(now) == false)
 }
 
-class CareViewModel(app: Application) : AndroidViewModel(app) {
+class CareController(private val app: Application) {
     private val store = CareStore(app)
-    private val mutable = MutableStateFlow(CareUiState(
+    private val mutable = StateCell(CareUiState(
         settings = store.settings(), events = store.events(), reactions = store.reactions()))
-    val state = mutable.asStateFlow()
+    val state = mutable
     private val simulator = DemoVehicle()
-    private var live: LiveVehicle? = null
-    private var liveBrakeEvents: Job? = null
+    @Volatile private var live: LiveVehicle? = null
     val restoreLiveConnection get() = store.liveInputPreferred()
     private var engine = ContextEngine()
     private var evaluator = newEvaluator()
-    private val actionMutex = Mutex()
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val actions = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var closing = false
+    private val pulse = object : Runnable {
+        override fun run() {
+            if (closing) return
+            tick()
+            onChanged?.invoke(state.value)
+            main.postDelayed(this, if (evaluator.active) 16 else 250)
+        }
+    }
+    var onChanged: ((CareUiState) -> Unit)? = null
+    private fun post(block: () -> Unit) { main.post { if (!closing) block() } }
+    private fun work(block: () -> Unit) { if (!closing) actions.execute {
+        try { block() } catch (e: Exception) { if (!closing) message(e.message ?: "작업 실패") }
+    } }
     private var coordinator = coordinator(simulator, true)
     private val spokenAt = mutableMapOf<String, Long>()
     private var lastRecorded: ReactionState? = null
@@ -64,28 +72,19 @@ class CareViewModel(app: Application) : AndroidViewModel(app) {
     private val voice = VoiceGuide(app) { status -> mutable.update { it.copy(voiceStatus = status) } }
 
     init {
-        viewModelScope.launch {
-            refreshCapabilities(simulator)
-            while (isActive) {
-                tick()
-                delay(if (evaluator.active) 50 else 250)
-            }
-        }
-        viewModelScope.launch {
-            while (isActive) {
-                actionMutex.withLock {
-                    val s = state.value
-                    val desired = if (s.enabled && s.foreground && !s.busy) s.plan.desired else emptyMap()
-                    coordinator.reconcile(desired, now()) { c, v ->
-                        val current = state.value
-                        current.enabled && current.foreground && !current.busy && current.plan.desired[c] == v
-                    }
-                    mutable.update { it.copy(statuses = coordinator.statuses,
-                        values = if (it.demo) simulator.values.toMap() else emptyMap()) }
+        main.post(pulse)
+        work { refreshCapabilities(simulator) }
+        actions.scheduleWithFixedDelay({
+            if (!closing) runCatching {
+                val s = state.value
+                coordinator.reconcile(if (s.enabled && s.foreground && !s.busy) s.plan.desired else emptyMap(), now()) { c, v ->
+                    val current = state.value
+                    !closing && current.enabled && current.foreground && !current.busy && current.plan.desired[c] == v
                 }
-                delay(500)
-            }
-        }
+                mutable.update { it.copy(statuses = coordinator.statuses,
+                    values = if (it.demo) simulator.values.toMap() else emptyMap()) }
+            }.onFailure { message(it.message ?: "차량 제어 실패") }
+        }, 0, 500, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
     private fun now() = SystemClock.elapsedRealtime()
     private fun newEvaluator() = ReactionEvaluator {
@@ -100,11 +99,11 @@ class CareViewModel(app: Application) : AndroidViewModel(app) {
         store.addEvent(CareEvent(System.currentTimeMillis(), title, detail, demo))
         mutable.update { it.copy(events = store.events()) }
     }
-    private suspend fun refreshCapabilities(g: VehicleGateway) {
+    private fun refreshCapabilities(g: VehicleGateway) {
         for (c in Control.entries) {
             val cap = try { g.capability(c) }
-            catch (e: TimeoutCancellationException) { Capability(false, reason = "응답 시간 초과") }
-            catch (e: CancellationException) { throw e }
+            catch (e: java.util.concurrent.TimeoutException) { Capability(false, reason = "응답 시간 초과") }
+            catch (e: java.util.concurrent.CancellationException) { throw e }
             catch (e: Exception) { Capability(false, reason = e.message ?: "지원 확인 실패") }
             mutable.update { it.copy(capabilities = it.capabilities + (c to cap)) }
         }
@@ -161,58 +160,63 @@ class CareViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun switchMode(demo: Boolean) {
         val s = state.value
-        if (demo == s.demo || s.busy) return
+        if (demo == s.demo || s.busy || closing) return
         if (!s.demo && s.snapshot.moving(s.now)) { message("주행 중에는 모드를 바꿀 수 없습니다"); return }
         mutable.update { it.copy(busy = true, enabled = false) }
         evaluator.cancel(); voice.stop()
-        viewModelScope.launch {
-            actionMutex.withLock {
+        work {
+            try {
                 coordinator.reconcile(emptyMap(), now())
                 if (coordinator.pendingRestoration) {
-                    mutable.update { it.copy(busy = false) }
                     message("차량 설정 복원이 대기 중입니다. 연결을 유지한 뒤 다시 전환해 주세요")
-                    return@withLock
-                }
-                liveBrakeEvents?.cancel(); liveBrakeEvents = null
-                live?.close(); live = null
-                engine = ContextEngine(); startupOffered = false; spokenAt.clear(); lastRecorded = null; ventilationUntil = Long.MIN_VALUE
-                mutable.update { it.copy(demo = demo, enabled = demo, enhanced = false, busy = true,
-                    startupPrompt = false, statuses = emptyMap(), capabilities = emptyMap(), problems = emptyMap(), snapshot = VehicleSnapshot(),
-                    settings = it.settings.copy(glassLevel = null), plan = CarePlan(), message = null) }
-                evaluator = newEvaluator()
-                store.saveInputMode(demo)
-                if (demo) {
-                    simulator.scenario = DemoScenario.PARKED; simulator.brakePressed = false
-                    coordinator = coordinator(simulator, true)
-                    refreshCapabilities(simulator)
-                } else if (getApplication<Application>().packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
-                    val connection = LiveVehicle(getApplication(), viewModelScope)
-                    live = connection
-                    liveBrakeEvents = viewModelScope.launch {
-                        connection.brakeEvents.collect { reading ->
-                            if (live === connection && !state.value.demo) {
-                                evaluator.tick(connection.state.value.copy(brake = reading), now(), state.value.foreground)
-                                tick()
-                            }
-                        }
-                    }
-                    connection.start(getApplication())
-                    coordinator = coordinator(connection.gateway, false)
-                    coordinator.reconcile(emptyMap(), now())
-                    refreshCapabilities(connection.gateway)
+                    mutable.update { it.copy(busy = false) }
                 } else {
-                    // Keep a non-writing coordinator; enabled remains false without valid parked telemetry.
-                    coordinator = coordinator(simulator, true)
-                    message("이 기기에는 차량 서비스가 없습니다. 시뮬레이션으로 기능을 확인할 수 있습니다")
+                    // Release the previous SDK instance before constructing its replacement.
+                    live?.onBrake = null
+                    live?.close()
+                    post { finishSwitch(demo) }
                 }
-                mutable.update { it.copy(busy = false) }
+            } catch (e: Exception) {
+                mutable.update { it.copy(busy = false) }; message(e.message ?: "연결 전환 실패")
             }
         }
     }
-    fun refreshConnection() {
-        if (!state.value.demo && !state.value.busy) viewModelScope.launch {
-            actionMutex.withLock { live?.let { refreshCapabilities(it.gateway) } }
+    private fun finishSwitch(demo: Boolean) {
+        live = null
+        engine = ContextEngine(); startupOffered = false; spokenAt.clear(); lastRecorded = null; ventilationUntil = Long.MIN_VALUE
+        mutable.update { it.copy(demo = demo, enabled = demo, enhanced = false, busy = true,
+            startupPrompt = false, statuses = emptyMap(), capabilities = emptyMap(), problems = emptyMap(), snapshot = VehicleSnapshot(),
+            settings = it.settings.copy(glassLevel = null), plan = CarePlan(), message = null, scenario = DemoScenario.PARKED) }
+        evaluator = newEvaluator()
+        store.saveInputMode(demo)
+        if (demo) {
+            simulator.scenario = DemoScenario.PARKED; simulator.brakePressed = false
+            work { coordinator = coordinator(simulator, true); refreshCapabilities(simulator); mutable.update { it.copy(busy = false) } }
+        } else if (app.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
+            val connection = LiveVehicle(app)
+            live = connection
+            connection.onBrake = { snapshot ->
+                // Capture every event snapshot before posting; fast press/release pairs must not collapse.
+                post { if (live === connection && !state.value.demo) {
+                    evaluator.tick(snapshot, snapshot.brake?.atMs ?: now(), state.value.foreground)
+                    tick()
+                } }
+            }
+            connection.start(app)
+            work {
+                try {
+                    coordinator = coordinator(connection.gateway, false)
+                    coordinator.reconcile(emptyMap(), now())
+                    refreshCapabilities(connection.gateway)
+                } finally { mutable.update { it.copy(busy = false) } }
+            }
+        } else {
+            work { coordinator = coordinator(simulator, true); mutable.update { it.copy(busy = false) } }
+            message("이 기기에는 차량 서비스가 없습니다. 시뮬레이션으로 기능을 확인할 수 있습니다")
         }
+    }
+    fun refreshConnection() {
+        if (!state.value.demo && !state.value.busy) work { live?.let { refreshCapabilities(it.gateway) } }
     }
     fun scenario(value: DemoScenario) {
         if (!state.value.demo) return
@@ -267,17 +271,26 @@ class CareViewModel(app: Application) : AndroidViewModel(app) {
     fun saveReport(uri: Uri, csv: Boolean = false) {
         if (!state.value.canConfigure) return
         val json = if (csv) store.exportCsv(state.value.demo) else store.export(state.value.demo)
-        viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) { runCatching {
-                requireNotNull(getApplication<Application>().contentResolver.openOutputStream(uri)).bufferedWriter().use { it.write(json) }
-            } }
+        work {
+            val result = runCatching {
+                requireNotNull(app.contentResolver.openOutputStream(uri)).bufferedWriter().use { it.write(json) }
+            }
             message(if (result.isSuccess) "기록을 저장했습니다" else "저장 실패: ${result.exceptionOrNull()?.message}")
         }
     }
     fun shareReport(): String = CareReports.shareText(store.reactions(), store.events(), state.value.demo)
     fun message(text: String?) { mutable.update { it.copy(message = text) } }
-    override fun onCleared() {
-        // Any interrupted restoration remains journaled and is recovered on the next live connection.
-        live?.close(); voice.close(); super.onCleared()
+    fun close() {
+        if (closing) return
+        foreground(false)
+        closing = true
+        onChanged = null
+        main.removeCallbacksAndMessages(null)
+        voice.close()
+        // Finish restoration on the serialized worker, then release connections. Journal survives process death.
+        actions.execute {
+            try { coordinator.reconcile(emptyMap(), now()) }
+            finally { live?.close(); actions.shutdown() }
+        }
     }
 }

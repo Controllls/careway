@@ -38,7 +38,7 @@ class CareStore(context: Context) {
             ReactionRecord(it.getLong("at"), if (it.isNull("ms")) null else it.getLong("ms"), it.getBoolean("delayed"), it.getBoolean("demo"))
         } }
     }.getOrDefault(emptyList())
-    fun addReaction(r: ReactionRecord) {
+    @Synchronized fun addReaction(r: ReactionRecord) {
         val a = JSONArray()
         (reactions() + r).filter { recent(it.atMs) }.takeLast(2_000).forEach { a.put(JSONObject().put("at", it.atMs)
             .put("ms", it.durationMs ?: JSONObject.NULL).put("delayed", it.delayed).put("demo", it.demo)) }
@@ -50,12 +50,12 @@ class CareStore(context: Context) {
             CareEvent(it.getLong("at"), it.getString("title"), it.getString("detail"), it.getBoolean("demo"))
         } }
     }.getOrDefault(emptyList())
-    fun addEvent(e: CareEvent) {
+    @Synchronized fun addEvent(e: CareEvent) {
         val a = JSONArray()
         (events() + e).filter { recent(it.atMs) }.takeLast(20_000).forEach { a.put(JSONObject().put("at", it.atMs).put("title", it.title).put("detail", it.detail).put("demo", it.demo)) }
         prefs.edit().putString("events", a.toString()).apply()
     }
-    fun clearHistory(demo: Boolean) {
+    @Synchronized fun clearHistory(demo: Boolean) {
         val remainingEvents = JSONArray(prefs.getString("events", "[]"))
         val remainingReactions = JSONArray(prefs.getString("reactions", "[]"))
         fun keep(a: JSONArray) = JSONArray().apply { for (i in 0 until a.length()) {

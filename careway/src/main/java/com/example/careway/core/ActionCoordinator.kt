@@ -1,7 +1,8 @@
 package com.example.careway.core
 
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.TimeoutCancellationException
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.CancellationException
+
 
 data class Ownership(val original: Int, val applied: Int, val confirmed: Boolean = false)
 interface OwnershipStore {
@@ -22,7 +23,7 @@ class ActionCoordinator(
     val statuses: Map<Control, String> get() = lastStatus.toMap()
     val pendingRestoration get() = owned.isNotEmpty()
 
-    suspend fun reconcile(desired: Map<Control, Int>, now: Long, stillWanted: (Control, Int) -> Boolean = { _, _ -> true }) {
+    fun reconcile(desired: Map<Control, Int>, now: Long, stillWanted: (Control, Int) -> Boolean = { _, _ -> true }) {
         suspended.retainAll(desired.keys)
         for (control in Control.entries) {
             if (now < (retryAt[control] ?: Long.MIN_VALUE)) continue
@@ -73,7 +74,7 @@ class ActionCoordinator(
                     status(control, "적용 확인", "차량에서 적용된 값을 다시 읽었습니다")
                 } else if (target != null) status(control, "설정 유지", "필요한 설정이 이미 적용되어 있습니다")
                 retryAt.remove(control)
-            } catch (e: TimeoutCancellationException) {
+            } catch (e: TimeoutException) {
                 retryAt[control] = now + 15_000
                 status(control, "제어 보류", "차량 응답 시간 초과")
             } catch (e: CancellationException) { throw e

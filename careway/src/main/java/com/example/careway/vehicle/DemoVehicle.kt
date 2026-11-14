@@ -13,14 +13,14 @@ class DemoVehicle : VehicleGateway {
     var brakePressed = false
     var headlights = false
     var failure = false
-    val values = Control.entries.associateWith { if (it == Control.AMBIENT) 65 else 0 }.toMutableMap()
-    override suspend fun capability(control: Control) = Capability(true, 0,
+    val values = Control.entries.associateWith { if (it == Control.AMBIENT) 65 else 0 }.let { java.util.concurrent.ConcurrentHashMap(it) }
+    override fun capability(control: Control) = Capability(true, 0,
         when (control) { Control.AMBIENT -> 100; Control.GLASS_FRONT, Control.GLASS_ROOF -> 5; else -> 1 })
-    override suspend fun read(control: Control): Int {
+    override fun read(control: Control): Int {
         check(!failure) { "시뮬레이션: 차량 통신 실패" }
         return values.getValue(control)
     }
-    override suspend fun write(control: Control, value: Int) {
+    override fun write(control: Control, value: Int) {
         check(!failure) { "시뮬레이션: 차량 통신 실패" }
         values[control] = value
     }

@@ -27,16 +27,10 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import com.example.careway.core.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.flow.receiveAsFlow
 import com.example.careway.vehicle.SdkCalls.call as sdkCall
 
 /** Typed SDK integration. Simulation is a different gateway and never feeds this adapter. */
-class LiveVehicle(context: Context, private val scope: CoroutineScope) {
+class LiveVehicle(context: Context) {
     private val handler = Handler(Looper.getMainLooper())
     private val vehicle = Vehicle(context)
     val gateway = PleosGateway(vehicle)
@@ -44,19 +38,19 @@ class LiveVehicle(context: Context, private val scope: CoroutineScope) {
     private var car: Car? = null
     private var properties: CarPropertyManager? = null
     private var ux: CarUxRestrictionsManager? = null
-    private val readSupport = mutableSetOf<String>()
+    private val readSupport = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val registered = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-    private val rainMutex = kotlinx.coroutines.sync.Mutex()
+    private val rainMutex = java.util.concurrent.locks.ReentrantLock()
     private val front = WindowArea(WindowValue.FRONT_WINDSHIELD)
-    private val mutable = MutableStateFlow(VehicleSnapshot())
-    val state = mutable.asStateFlow()
-    private val pedalEdges = Channel<Reading<Boolean>?>(Channel.UNLIMITED)
-    val brakeEvents = pedalEdges.receiveAsFlow()
-    private val problemState = MutableStateFlow<Map<String, String>>(emptyMap())
-    val problems = problemState.asStateFlow()
-    private var poll: Job? = null
-    private var closed = false
-    private var naviReady = false
+    private val mutable = StateCell(VehicleSnapshot())
+    val state = mutable
+    @Volatile var onBrake: ((VehicleSnapshot) -> Unit)? = null
+    private val problemState = StateCell<Map<String, String>>(emptyMap())
+    val problems = problemState
+    private val workers = java.util.concurrent.Executors.newScheduledThreadPool(9)
+    private fun every(block: () -> Unit) { workers.scheduleWithFixedDelay({ if (!closed) runCatching(block).onFailure { problem("연결", it) } }, 0, 1000, java.util.concurrent.TimeUnit.MILLISECONDS) }
+    @Volatile private var closed = false
+    @Volatile private var naviReady = false
     private fun now() = SystemClock.elapsedRealtime()
     private fun problem(key: String, e: Throwable) {
         problemState.update { it + (key to (e.message?.take(120) ?: e.javaClass.simpleName)) }
@@ -77,7 +71,7 @@ class LiveVehicle(context: Context, private val scope: CoroutineScope) {
     private val wiperListener: WiperStateListener = object : WiperStateListener {
         override fun onWiperStateUpdated(state: WiperState?) {
             // State only reports ON/OFF; continuous levels are WiperSwitch, read separately.
-            if (!closed) scope.launch { readRain() }
+            if (!closed) runCatching { workers.execute { if (!closed) readRain() } }
         }
         override fun onFailed(e: Exception) { registered.remove("와이퍼"); mutate { it.copy(rain = null, wiperLevel = null) }; problem("와이퍼", e) }
     }
@@ -135,63 +129,38 @@ class LiveVehicle(context: Context, private val scope: CoroutineScope) {
                 }
             }
         }.onFailure { problem("차량 상태", it) }
-        poll = scope.launch {
-            supervisorScope {
-                launch {
-                    while (isActive) {
-                        query("브레이크", { acceptBrake(null) }) {
-                            ensureReadable("브레이크")
-                            if (registered.add("브레이크")) vehicle.getBrake().registerBrakePedalStatus(brakeListener)
-                            val b = sdkCall<Boolean?> { ok, fail -> vehicle.getBrake().getCurrentBrakePedalStatus(ok, fail) }
-                            acceptBrake(b, fromEvent = false)
-                        }
-                        delay(1_000)
-                    }
-                }
-                launch {
-                    while (isActive) {
-                        query("하향등", { mutate { it.copy(lowBeam = null) } }) {
-                            ensureReadable("하향등")
-                            if (registered.add("하향등")) vehicle.getLight().registerLowBeamLightState(lightListener)
-                            updateLight(sdkCall { ok, fail -> vehicle.getLight().getCurrentLowBeamLightState(ok, fail) })
-                        }
-                        delay(1_000)
-                    }
-                }
-                launch { while (isActive) { readRain(); delay(1_000) } }
-                launch {
-                    while (isActive) {
-                        runCatching { ux?.currentCarUxRestrictions }.onSuccess { restrictions ->
-                            mutate { it.copy(uxRestricted = restrictions?.let { r -> Reading(r.isRequiresDistractionOptimization, now()) }) }
-                        }.onFailure { mutate { it.copy(uxRestricted = null) }; problem("주행 조작 제한", it) }
-                        delay(1_000)
-                    }
-                }
-                // Independent polling prevents a slow optional SDK domain from aging the parking interlock.
-                ids.forEach { id ->
-                    launch(Dispatchers.IO) {
-                        while (isActive) {
-                                val manager = properties
-                                if (manager != null) runCatching { manager.getProperty<Any>(id, 0) }
-                                    .onSuccess { if (it != null) acceptProperty(it) else invalidate(id) }
-                                    .onFailure { invalidate(id); problem("차량 센서 $id", it) }
-                            delay(1_000)
-                        }
-                    }
-                }
-                launch {
-                    while (isActive) {
-                        if (naviReady) runCatching { navi.getTBTInfo() }.onFailure { problem("내비게이션", it) }
-                        delay(1_000)
-                    }
-                }
+        every {
+            query("브레이크", { acceptBrake(null) }) {
+                ensureReadable("브레이크")
+                if (registered.add("브레이크")) vehicle.getBrake().registerBrakePedalStatus(brakeListener)
+                acceptBrake(sdkCall<Boolean?> { ok, fail -> vehicle.getBrake().getCurrentBrakePedalStatus(ok, fail) }, false)
             }
         }
+        every {
+            query("하향등", { mutate { it.copy(lowBeam = null) } }) {
+                ensureReadable("하향등")
+                if (registered.add("하향등")) vehicle.getLight().registerLowBeamLightState(lightListener)
+                updateLight(sdkCall { ok, fail -> vehicle.getLight().getCurrentLowBeamLightState(ok, fail) })
+            }
+        }
+        every { readRain() }
+        every {
+            runCatching { ux?.currentCarUxRestrictions }.onSuccess { r ->
+                mutate { it.copy(uxRestricted = r?.let { Reading(it.isRequiresDistractionOptimization, now()) }) }
+            }.onFailure { mutate { it.copy(uxRestricted = null) }; problem("주행 조작 제한", it) }
+        }
+        ids.forEach { id -> every {
+            val manager = properties
+            if (manager != null) runCatching { manager.getProperty<Any>(id, 0) }
+                .onSuccess { if (it != null) acceptProperty(it) else invalidate(id) }
+                .onFailure { invalidate(id); problem("차량 센서 $id", it) }
+        } }
+        every { if (naviReady) runCatching { navi.getTBTInfo() }.onFailure { problem("내비게이션", it) } }
     }
-    private suspend fun query(key: String, invalidate: () -> Unit, block: suspend () -> Unit) {
+    private fun query(key: String, invalidate: () -> Unit, block: () -> Unit) {
         try { block(); good(key) }
-        catch (e: TimeoutCancellationException) { invalidate(); problem(key, e) }
-        catch (e: CancellationException) { throw e }
+        catch (e: java.util.concurrent.TimeoutException) { invalidate(); problem(key, e) }
+        catch (e: java.util.concurrent.CancellationException) { throw e }
         catch (e: Exception) { invalidate(); problem(key, e) }
     }
     @Synchronized private fun acceptBrake(pressed: Boolean?, fromEvent: Boolean = true) {
@@ -200,9 +169,9 @@ class LiveVehicle(context: Context, private val scope: CoroutineScope) {
         val reading = pressed?.let { Reading(it, now()) }
         mutate { it.copy(brake = reading, brakeFromEvent = pressed != null && (fromEvent || (it.brakeFromEvent && previous == pressed))) }
         // Keep each press/release edge even if a quick tap fits between two UI refresh ticks.
-        if (fromEvent && previous != pressed) pedalEdges.trySend(reading)
+        if (fromEvent && previous != pressed) onBrake?.invoke(mutable.value)
     }
-    private suspend fun readRain() = query("와이퍼", { mutate { it.copy(rain = null) } }) {
+    private fun readRain() = query("와이퍼", { mutate { it.copy(rain = null) } }) {
         if (!rainMutex.tryLock()) return@query
         try {
         ensureReadable("와이퍼")
@@ -222,7 +191,7 @@ class LiveVehicle(context: Context, private val scope: CoroutineScope) {
         mutate { it.copy(rain = raining?.let { b -> Reading(b, now()) }, wiperLevel = switch?.let { w -> Reading(w.name, now()) }) }
         } finally { rainMutex.unlock() }
     }
-    private suspend fun ensureReadable(key: String) {
+    private fun ensureReadable(key: String) {
         if (key in readSupport) return
         val readable = listOf(AccessType.READ, AccessType.READ_WRITE)
         val supported = sdkCall<Boolean> { ok, fail -> when (key) {
@@ -265,8 +234,7 @@ class LiveVehicle(context: Context, private val scope: CoroutineScope) {
         else -> s
     } }
     fun close() {
-        closed = true; poll?.cancel()
-        pedalEdges.close()
+        closed = true; onBrake = null; workers.shutdownNow()
         runCatching { properties?.unregisterCallback(carListener) }
         runCatching { ux?.unregisterListener() }
         runCatching { car?.disconnect() }

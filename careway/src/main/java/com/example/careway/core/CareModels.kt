@@ -74,9 +74,9 @@ data class CarePlan(
 )
 
 interface VehicleGateway {
-    suspend fun capability(control: Control): Capability
-    suspend fun read(control: Control): Int
-    suspend fun write(control: Control, value: Int)
+    fun capability(control: Control): Capability
+    fun read(control: Control): Int
+    fun write(control: Control, value: Int)
 }
 
 data class CareEvent(val atMs: Long, val title: String, val detail: String, val demo: Boolean)
