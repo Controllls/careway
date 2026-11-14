@@ -1,0 +1,45 @@
+# Local IDE, SDK and Gradle state
+.idea/
+.gradle/
+.kotlin/
+*.iml
+local.properties
+
+# Generated outputs
+build/
+build-move-backup/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.hprof
+
+# Credentials and signing keys
+.env
+.env.*
+!.env.example
+keystore.properties
+key.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Local inference models, credentials, audio, database, dependencies and reports
+server/data/
+server/.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
+node_modules/
+*.db
+*.db-shm
+*.db-wal
+*.log
