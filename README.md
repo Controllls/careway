@@ -6,14 +6,14 @@
 
 ## APK 다운로드
 
-[꼼짝마차 3.1.0 Release APK 다운로드](https://github.com/Controllls/stopcar/raw/refs/heads/main/apk/stopcar-3.1.0-release.apk) · [파일 및 검증 정보](apk/release-info.json)
+[꼼짝마차 3.1.0 Release APK 다운로드](https://github.com/Controllls/stopcar/raw/refs/heads/main/apk/연근_꼼짝마차_release.apk) · [파일 및 검증 정보](apk/release-info.json)
 
-저장소 내 APK 위치: [`apk/stopcar-3.1.0-release.apk`](apk/stopcar-3.1.0-release.apk)
+저장소 내 APK 위치: [`apk/연근_꼼짝마차_release.apk`](apk/연근_꼼짝마차_release.apk)
 
 크기 **26.95MB** · 릴리즈 서명 검증 완료 · `debuggable=false` · Pleos 에뮬레이터 기기 테스트 **6개 통과**.
 
 ```powershell
-adb install -r apk/stopcar-3.1.0-release.apk
+adb install -r apk/연근_꼼짝마차_release.apk
 adb shell am start --user current -n com.example.careway/.MainActivity
 ```
 

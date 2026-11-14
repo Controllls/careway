@@ -12,7 +12,7 @@ captures/
 .externalNativeBuild/
 .cxx/
 *.apk
-!apk/stopcar-3.1.0-release.apk
+!apk/연근_꼼짝마차_release.apk
 *.aab
 *.ap_
 *.hprof

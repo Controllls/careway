@@ -7,7 +7,7 @@
   "test_only": false,
   "min_sdk": 28,
   "target_sdk": 37,
-  "file": "stopcar-3.1.0-release.apk",
+  "file": "연근_꼼짝마차_release.apk",
   "bytes": 26953971,
   "sha256": "20b00e5396d37b1d481c7078318aa4bb6f4334041f96d5cc214232c99a556659",
   "signing": {
