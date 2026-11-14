@@ -4,20 +4,16 @@
 
 출발 전 브레이크 반응시간을 기록하고, 야간·우천·터널 등 주행 환경에 따라 차량 설정을 조절하는 Pleos Connect 앱.
 
-## APK 다운로드
+## 다운로드
 
-[꼼짝마차 3.1.0 Release APK 다운로드](https://github.com/Controllls/stopcar/raw/refs/heads/main/apk/연근_꼼짝마차_release.apk) · [파일 및 검증 정보](apk/release-info.json)
+[꼼짝마차 APK 다운로드](https://github.com/Controllls/stopcar/raw/refs/heads/main/apk/연근_꼼짝마차_release.apk)
 
 저장소 내 APK 위치: [`apk/연근_꼼짝마차_release.apk`](apk/연근_꼼짝마차_release.apk)
-
-크기 **26.95MB** · 릴리즈 서명 검증 완료 · `debuggable=false` · Pleos 에뮬레이터 기기 테스트 **6개 통과**.
 
 ```powershell
 adb install -r apk/연근_꼼짝마차_release.apk
 adb shell am start --user current -n com.example.careway/.MainActivity
 ```
-
-릴리즈 전용 키로 서명한 APK다. 기존 Debug 앱과 서명이 달라 덮어쓸 수 없다. Debug 앱이 설치된 기기는 기록을 내보낸 뒤 기존 앱을 제거하고 설치한다.
 
 ## 주요 기능
 
@@ -53,14 +49,11 @@ adb shell am start --user current -n com.example.careway/.MainActivity
 | 화면 | Android Activity·View·Canvas |
 | 상태 관리 | CareController·StateCell, Handler로 화면 갱신 |
 | 비동기 처리 | Executor·SDK 콜백·CompletableFuture |
-| 차량 상태·제어 | Pleos Vehicle 2.3.2 |
-| 내비게이션 | Pleos NaviHelper 3.0.5 |
-| 음성 | Pleos TextToSpeech 3.3.1, ON_DEVICE·ko-KR |
+| 차량 상태·제어 | Pleos Vehicle SDK |
+| 내비게이션 | Pleos NaviHelper SDK |
+| 음성 | Pleos TextToSpeech SDK, ON_DEVICE·ko-KR |
 | 표준 차량 정보 | AAOS CarPropertyManager·CarUxRestrictionsManager |
 | 저장 | SharedPreferences·JSON |
-| 테스트 | JUnit 4·Android Instrumentation |
-
-앱 코드에는 AndroidX·Compose·Coroutines를 직접 사용하지 않는다. Pleos SDK의 전이 의존성에 포함된 AndroidX·Coroutines는 유지한다.
 
 차량 입력 → 상황 판단 → 안내·제어 요청 → 실제 값 확인 → 기록·복원 순서로 처리한다. 차량 통신은 작업 스레드에서 실행하고, 반응 측정과 화면 갱신은 메인 스레드에서 처리한다.
 
@@ -69,22 +62,22 @@ adb shell am start --user current -n com.example.careway/.MainActivity
 | 항목 | 설정 |
 |---|---|
 | 개발·실행 에뮬레이터 | Pleos Connect Emulator **v2.1.0** |
-| 시스템 이미지 | Android 14(API 34), x86_64 |
+| 시스템 이미지 | Android, x86_64 |
 | 화면 규격 | **2560×1440px, 160dpi**, 가로 화면 |
 | 실행 사용자 | user 10 |
 | 개발 호스트 | Windows, Android Studio |
 | 차량 연동 | Pleos 차량·내비게이션·음성 서비스 및 기능별 권한 |
 
-반응 측정은 완전 정차·P단·주차 브레이크·UX 조작 허용·브레이크 이벤트 수신이 필요하다. 시뮬레이션 모드는 가상 차량 입력으로 실행한다.
+- 반응 측정은 완전 정차·P단·주차 브레이크·UX 조작 허용·브레이크 이벤트 수신이 필요하다.
+- 시뮬레이션 모드는 가상 차량 입력으로 실행한다. 출구·역광·스마트글라스는 시뮬레이션으로 제공한다.
+- 차량 제어 기능은 해당 차량의 API 지원 여부와 권한에 따라 동작한다.
 
 ## 빌드 및 실행
 
-- Android SDK 37, minSdk 28
-- Gradle 9.6.0, AGP 9.4.1
+- Android SDK, Gradle
 - Pleos Connect 에뮬레이터 및 SDK 서비스
 - 실행 모듈: `careway`
 - 앱 ID: `com.example.careway`
-- 버전: `3.1.0`
 
 SDK 경로를 `local.properties` 또는 `ANDROID_HOME`에 설정한다. Gradle Wrapper와 JVM 도구 체인 설정은 저장소에 포함되어 있다.
 
@@ -96,7 +89,7 @@ adb shell am start --user current -n com.example.careway/.MainActivity
 
 릴리즈 빌드: `.\gradlew.bat :careway:assembleRelease`. 서명 설정은 저장소 외부의 `~/.gradle/stopcar-release.properties` 또는 `-PstopcarSigningFile=경로`로 지정한다. 필드는 `storeFile`, `storePassword`, `keyAlias`, `keyPassword`이며, 설정이 없으면 서명되지 않은 APK가 생성된다.
 
-## 기능 실행
+## 사용 방법
 
 1. **시뮬레이션 → 반응 체크 시작**을 누른다. 1.5~3.5초 뒤 동물이 나타나면 **시연: 브레이크 밟기**를 누른다. 재측정 전에는 **시연: 브레이크 떼기**를 누른다.
 2. **야간 미점등**을 선택해 경고를 확인하고 **시연: 전조등 켜기**로 해제한다.
@@ -104,32 +97,6 @@ adb shell am start --user current -n com.example.careway/.MainActivity
 4. **통과 후 복원** 또는 **케어 중지**로 설정 복원을 확인한다.
 5. **차량 연결 → 케어 켜기**로 실제 SDK 입력을 사용한다. 시작 시 정차 조건과 권한을 확인한다.
 6. **케어 기록**에서 JSON·CSV 저장 및 공유, **설정**에서 기능별 활성화와 음성 테스트를 실행한다.
-
-## 연동 상태
-
-| 항목 | 확인 범위 |
-|---|---|
-| 속도·기어·주차 브레이크·브레이크 | 에뮬레이터에서 AAOS·Pleos 입력 수신 확인 |
-| 내비게이션 | TBT 수신 및 터널 접근 처리 구현. 실제 경로의 터널 주행 시험 미실시 |
-| 음성 | 한국어 합성 완료·오디오 출력 로그 확인 |
-| 미러 열선 | 3.0.0에서 양쪽 미러 변경·복원 확인 |
-| 공조·제상·내외기·실내 조명 | 제어 요청 구현. 3.0.0 에뮬레이터에서 성공 응답 후 값 변경 미확인 |
-| 출구·역광·스마트글라스 | 시뮬레이션 검증. 실제 출구·역광 입력 미연동, 에뮬레이터 스마트글라스 미지원 |
-
-차량별 지원 여부는 capability API로 확인한다. 물리 차량 주행 시험은 미실시 상태다.
-
-## 테스트
-
-단위 테스트 **36개**, 기기 테스트 **6개** 통과. Lint 오류 **0개**, 경고 **20개**. [검증 결과 및 APK 해시](docs/validation-3.1.0.json)
-
-```powershell
-.\gradlew.bat :careway:testDebugUnitTest :careway:lintDebug :careway:assembleDebug :careway:assembleDebugAndroidTest
-adb install -r careway\build\outputs\apk\debug\careway-debug.apk
-adb install -r careway\build\outputs\apk\androidTest\debug\careway-debug-androidTest.apk
-adb shell am instrument --user current -w com.example.careway.test/com.example.careway.NativeTestRunner
-```
-
-기기 테스트는 반응 측정·조기 입력·화면 이탈 취소·설정 복원 시뮬레이션·기록 이전·내보내기·Activity 재생성·SDK 읽기·모드 전환을 검사한다. SDK 전이 의존성 JNA의 16KB 페이지 정렬 경고가 남아 있다.
 
 ## 디렉터리 구조
 
@@ -141,6 +108,4 @@ careway/src/main/java/com/example/careway/
   vehicle/              Pleos·AAOS 연결·음성·시뮬레이션
   data/                 기록 저장·집계·내보내기
   ui/                   주행·반응 체크·기록·설정 화면
-careway/src/test/        단위 테스트
-careway/src/androidTest/ 기기 테스트
 ```
