@@ -30,8 +30,8 @@ android {
         applicationId = "com.example.careway"
         minSdk = 28
         targetSdk = 37
-        versionCode = 11
-        versionName = "3.5.0"
+        versionCode = 12
+        versionName = "3.6.0"
         testInstrumentationRunner = "com.example.careway.NativeTestRunner"
     }
     buildFeatures { buildConfig = true }
@@ -44,7 +44,12 @@ android {
         }
     }
     buildTypes {
+        // Demo tools: the scenario page, the simulated vehicle and the mode buttons.
+        // The release app ships without them; -PcarewayDemoTools=true keeps them for device tests.
+        val releaseDemoTools = providers.gradleProperty("carewayDemoTools").getOrElse("false").toBoolean()
+        getByName("debug") { buildConfigField("boolean", "DEMO_TOOLS", "true") }
         getByName("release") {
+            buildConfigField("boolean", "DEMO_TOOLS", releaseDemoTools.toString())
             isDebuggable = false
             isMinifyEnabled = false
             if (releaseSigningFile.isFile) signingConfig = signingConfigs.getByName("release")

@@ -62,6 +62,7 @@ class CareScreen(private val activity: Activity, private val model: CareControll
     fun selectPage(value:Int) {
         val s=model.state.value
         if(value==1 && !s.canViewReaction || value>1 && !s.canConfigure) return
+        if(value==4 && !BuildConfig.DEMO_TOOLS) return
         if(value==1 && page!=1) model.prepareReaction()
         if(value!=1) model.cancelReaction()
         page=value; build(); render(model.state.value)
@@ -69,22 +70,20 @@ class CareScreen(private val activity: Activity, private val model: CareControll
     private fun build() {
         removeAllViews(); bindings.clear(); orientation=VERTICAL; setBackgroundColor(ink); setPadding(dp(24),dp(12),dp(24),dp(12))
         val top=row(); addView(top)
-        button(top,"홈", "go_home") { selectPage(0) }
+        // No menu row: every page is reached from the home shortcuts, and "홈" brings the driver back.
+        if(page!=0) button(top,"홈", "go_home") { selectPage(0) }
         top.addView(text("꼼짝마차",28,mint),LayoutParams(0,-2,1f))
-        label(top,16,amber) { if(it.demo) "시뮬레이션" else "차량 연결" }
-        button(top,"시뮬레이션", "use_demo", {!it.busy}) { model.switchMode(true) }
-        button(top,"차량 연결", "connect_vehicle", {!it.busy}) { connect() }
-        val nav=row(); addView(nav)
-        listOf(0 to "주행 케어",4 to "시나리오 시연",1 to "세이프티 핏",2 to "케어 기록",3 to "설정").forEach { (i,title) ->
-            val tab=button(nav,title,"page_$i", { i==0 || (i==1 && it.canViewReaction) || (i>1 && it.canConfigure) }) { selectPage(i) }
-            if(i==page) tab.background=bg(amber)
+        if(BuildConfig.DEMO_TOOLS) {
+            label(top,16,amber) { if(it.demo) "시뮬레이션" else "차량 연결" }
+            button(top,"시뮬레이션", "use_demo", {!it.busy}) { model.switchMode(true) }
+            button(top,"차량 연결", "connect_vehicle", {!it.busy}) { connect() }
         }
         label(this,15,amber) { it.message.orEmpty() }.setOnClickListener { model.message(null) }
         label(this,16,amber,"situation_banner") { if(it.situation.active) "상황 유발 중 · ${it.situation.describe(it.now)}" else "" }
         label(this,21,amber,"care_banner") { if(it.enabled) it.plan.alerts.firstOrNull()?.let { a -> "${a.title} · ${a.detail}" }.orEmpty() else "" }
         val scroll=ScrollView(context); body=column(); scroll.addView(body); addView(scroll,LayoutParams(-1,0,1f))
         when(page) { 0->dashboard(); 1->reaction(); 2->history(); 3->settings(); 4->scenarios() }
-        label(this,13,amber) { if(it.demo) "시뮬레이션 · 가상 차량에서 기능이 동작합니다. 실제 차량에는 명령을 보내지 않습니다" else "차량 연결 · 화면 표시 중 케어 · 화면 이탈 시 제어 해제 및 복원" }
+        label(this,13,amber) { if(it.demo) "시뮬레이션 · 가상 차량에서 기능이 동작합니다. 실제 차량에는 명령을 보내지 않습니다" else "화면이 표시되는 동안 케어합니다 · 화면을 벗어나면 제어를 멈추고 설정을 복원합니다" }
         mode=model.state.value.demo
     }
     private fun kph(s:CareUiState)=s.snapshot.speedMps?.fresh(s.now)?.let { (it*3.6f+.5f).toInt().toString() } ?: "—"
@@ -195,10 +194,11 @@ class CareScreen(private val activity: Activity, private val model: CareControll
         label(vehicle,15,amber) { it.problems.entries.joinToString("\n") { e -> "${e.key}: ${e.value}" } }
         val actions=card("바로 가기")
         val controls=row(); actions.addView(controls)
-        button(controls,"반응 체크 시작","open_start_reaction",{it.canViewReaction&&!it.busy}) { selectPage(1); model.startReaction() }
+        button(controls,"반응 체크","open_start_reaction",{it.canViewReaction&&!it.busy}) { selectPage(1); model.startReaction() }
         val toggle=button(controls,"케어 중지","toggle_care",{!it.busy}) { model.enable(!model.state.value.enabled) }
         bindings += { toggle.text=if(it.enabled) "케어 중지" else "케어 켜기" }
-        button(controls,"시나리오 시연","open_scenarios",{it.canConfigure}) { selectPage(4) }
+        button(controls,"설정","open_settings",{it.canConfigure}) { selectPage(3) }
+        if(BuildConfig.DEMO_TOOLS) button(controls,"시나리오 시연","open_scenarios",{it.canConfigure}) { selectPage(4) }
     }
     private fun trigger(parent:LinearLayout,t:Trigger)=button(parent,t.label,"trigger_${t.name}",{!it.busy}) { model.trigger(t) }
     private fun step(parent:LinearLayout,tagName:String?=null,get:(CareUiState)->Pair<Boolean,String>) {
@@ -324,6 +324,9 @@ class CareScreen(private val activity: Activity, private val model: CareControll
         s.events.filter { it.demo==s.demo }.takeLast(50).reversed().forEach { timeline.addView(text("${time(it.atMs)} · ${it.title}\n${it.detail}",16,muted)) }
     }
     private fun settings() {
+        val records=card("케어 기록")
+        records.addView(text("최근 30일 반응 체크 평균과 전조등 안내 횟수를 확인하고 저장·공유합니다.",15,muted))
+        button(records,"케어 기록 보기","open_history",{it.canConfigure}) { selectPage(2) }
         val c=card("나에게 맞는 케어")
         fun toggle(title:String,get:(CareSettings)->Boolean,set:(CareSettings,Boolean)->CareSettings) {
             val v=Switch(context).apply { text=title; textSize=20f; setTextColor(Color.WHITE); isChecked=get(model.state.value.settings); setPadding(0,dp(10),0,dp(10)) }

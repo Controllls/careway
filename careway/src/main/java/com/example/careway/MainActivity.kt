@@ -24,7 +24,8 @@ class MainActivity : Activity() {
         }
         model.onChanged = screen::render
         screen.selectPage(savedInstanceState?.getInt("page") ?: 0)
-        if (model.restoreLiveConnection) connectVehicle()
+        // Without demo tools there is no simulation to stay in: always use the vehicle.
+        if (!BuildConfig.DEMO_TOOLS || model.restoreLiveConnection) connectVehicle()
     }
     private fun navigateBack() {
         if (screen.page != 0) screen.selectPage(0) else moveTaskToBack(true)

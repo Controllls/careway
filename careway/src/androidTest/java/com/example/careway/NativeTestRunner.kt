@@ -89,7 +89,7 @@ class NativeTestRunner : Instrumentation() {
 
             // Scenario triggers induce the situation only; warning, control and restoration run on the feature path.
             fun state()=activity.model.state.value
-            click("page_4"); click("trigger_NIGHT_DRIVE")
+            click("open_scenarios"); click("trigger_NIGHT_DRIVE")
             await("Full-screen headlight warning",8000) { activity.screen.warningView?.findViewWithTag<View>("headlight_warning")?.isShown==true }
             ui { check(state().situation.active && state().plan.alerts.first().id=="headlights") }
             await("Night ambient dimming",8000) { state().values[Control.AMBIENT]==0 }
