@@ -56,9 +56,9 @@ class AnimalCrossingScene(context: Context, private val visible: (Long) -> Unit)
         }
         val caption=when(state.reaction.phase) {
             ReactionPhase.IDLE -> "아래 ‘반응 체크’를 누르면 시작합니다"
-            ReactionPhase.WAITING -> "측정 중 · 잠시 후 동물이 나타납니다"
+            ReactionPhase.WAITING -> "측정 ${state.reaction.trial}/3 · 잠시 후 동물이 나타납니다"
             ReactionPhase.STIMULUS -> "지금 브레이크를 밟으세요"
-            ReactionPhase.COMPLETE -> "${state.reaction.reactionMs} ms · 브레이크 반응 기록 완료"
+            ReactionPhase.COMPLETE -> "평균 ${state.reaction.reactionMs?.let { com.example.careway.core.seconds(it) }}초 · 컨디션 ${state.reaction.condition?.label}"
             else -> state.reaction.message
         }
         color(0xFF152C32); canvas.drawRoundRect(w*.08f,h-56f,w*.92f,h-8f,16f,16f,paint)

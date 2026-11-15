@@ -23,12 +23,15 @@ android {
     namespace = "com.example.careway"
     compileSdk { version = release(37) }
     useLibrary("android.car", false)
+    // Device tests must carry the same signature as the installed app:
+    // -PcarewayTestBuildType=release runs them against the release-signed build.
+    testBuildType = providers.gradleProperty("carewayTestBuildType").getOrElse("debug")
     defaultConfig {
         applicationId = "com.example.careway"
         minSdk = 28
         targetSdk = 37
-        versionCode = 5
-        versionName = "3.1.0"
+        versionCode = 11
+        versionName = "3.5.0"
         testInstrumentationRunner = "com.example.careway.NativeTestRunner"
     }
     buildFeatures { buildConfig = true }

@@ -19,12 +19,13 @@ class CareStore(context: Context) {
         }
     }
     private fun recent(at: Long) = at >= System.currentTimeMillis() - 31L * 86_400_000
-    fun liveInputPreferred() = prefs.getBoolean("live_input", false)
+    private val automotive = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_AUTOMOTIVE)
+    /** In a vehicle the app connects by itself; simulation stays selected only after the user chose it. */
+    fun liveInputPreferred() = prefs.getBoolean("live_input", automotive)
     fun saveInputMode(demo: Boolean) { prefs.edit().putBoolean("live_input", !demo).apply() }
     fun settings() = CareSettings(
         night = prefs.getBoolean("night", true), rain = prefs.getBoolean("rain", true),
         tunnel = prefs.getBoolean("tunnel", true), voice = prefs.getBoolean("voice", true),
-        glassLevel = null, // Reconfirm per connection; do not reuse a tint calibration on another vehicle.
     )
     fun saveSettings(s: CareSettings) {
         prefs.edit().putBoolean("night", s.night).putBoolean("rain", s.rain)

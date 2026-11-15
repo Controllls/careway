@@ -17,10 +17,20 @@ class MainActivity : Activity() {
         model = lastNonConfigurationInstance as? CareController ?: CareController(application)
         screen = CareScreen(this, model, ::connectVehicle, ::exportReport)
         setContentView(screen)
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT
+            ) { navigateBack() }
+        }
         model.onChanged = screen::render
         screen.selectPage(savedInstanceState?.getInt("page") ?: 0)
         if (model.restoreLiveConnection) connectVehicle()
     }
+    private fun navigateBack() {
+        if (screen.page != 0) screen.selectPage(0) else moveTaskToBack(true)
+    }
+    @Deprecated("Legacy Android back navigation")
+    override fun onBackPressed() { navigateBack() }
     private fun connectVehicle() {
         if (!packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) { model.switchMode(false); return }
         val declared = packageManager.getPackageInfo(packageName, PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty()

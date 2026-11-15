@@ -11,6 +11,8 @@ import kotlin.random.Random
 
 data class CareUiState(
     val demo: Boolean = true,
+    val situation: Situation = Situation(),
+    val lastTrigger: Trigger? = null,
     val startupPrompt: Boolean = false,
     val foreground: Boolean = false,
     val enabled: Boolean = true,
@@ -32,10 +34,9 @@ data class CareUiState(
     val reactions: List<ReactionRecord> = emptyList(),
     val scenario: DemoScenario = DemoScenario.PARKED,
 ) {
-    val parked get() = snapshot.parked(now)
     val reactionReady get() = snapshot.reactionReady(now)
-    val canViewReaction get() = demo || (snapshot.stationaryInPark(now) && snapshot.uxRestricted?.fresh(now) == false)
-    val canConfigure get() = demo || (parked && snapshot.uxRestricted?.fresh(now) == false)
+    val canViewReaction get() = !busy
+    val canConfigure get() = !busy
 }
 
 class CareController(private val app: Application) {
@@ -68,6 +69,8 @@ class CareController(private val app: Application) {
     private val spokenAt = mutableMapOf<String, Long>()
     private var lastRecorded: ReactionState? = null
     private var startupOffered = false
+    private var ignition = false
+    @Volatile private var autoEnable = false
     private var ventilationUntil = Long.MIN_VALUE
     private val voice = VoiceGuide(app) { status -> mutable.update { it.copy(voiceStatus = status) } }
 
@@ -76,6 +79,12 @@ class CareController(private val app: Application) {
         work { refreshCapabilities(simulator) }
         actions.scheduleWithFixedDelay({
             if (!closing) runCatching {
+                // A vehicle connection starts care by itself once nothing from an earlier session awaits restoration.
+                if (autoEnable && state.value.let { !it.demo && !it.enabled && !it.busy } && !coordinator.pendingRestoration) {
+                    autoEnable = false
+                    mutable.update { it.copy(enabled = true) }
+                    record("자동 케어 시작", "차량 연결과 함께 시작했습니다. 앱 화면이 표시되는 동안 동작합니다", false)
+                }
                 val s = state.value
                 coordinator.reconcile(if (s.enabled && s.foreground && !s.busy) s.plan.desired else emptyMap(), now()) { c, v ->
                     val current = state.value
@@ -87,9 +96,7 @@ class CareController(private val app: Application) {
         }, 0, 500, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
     private fun now() = SystemClock.elapsedRealtime()
-    private fun newEvaluator() = ReactionEvaluator {
-        store.reactions().filter { it.demo == state.value.demo }.mapNotNull { it.durationMs }
-    }
+    private fun newEvaluator() = ReactionEvaluator { Random.nextLong(1_500, 3_501) }
     private fun coordinator(g: VehicleGateway, demo: Boolean) = ActionCoordinator(g, store.ownership(demo)) { title, detail ->
         record(title, detail, demo)
         val control = Control.entries.firstOrNull { it.label == title }
@@ -111,7 +118,11 @@ class CareController(private val app: Application) {
     private fun tick() {
         val at = now()
         val s = state.value
-        val snapshot = if (s.demo) simulator.snapshot(at) else live?.state?.value ?: VehicleSnapshot()
+        val source = if (s.demo) simulator.snapshot(at) else live?.state?.value ?: VehicleSnapshot()
+        val situation = s.situation.settled(at)
+        if (situation != s.situation) record("상황 유발", "터널 구간을 통과했습니다")
+        // Induced inputs only. Everything below is the normal feature path.
+        val snapshot = situation.apply(source, at)
         evaluator.tick(snapshot, at, s.foreground)
         val reaction = evaluator.state
         var enhanced = s.enhanced
@@ -123,13 +134,13 @@ class CareController(private val app: Application) {
             record("세이프티 핏", reaction.message)
             if (s.settings.voice && s.foreground) voice.speak(reaction.message)
         }
-        if (!s.demo && s.foreground && !startupOffered && !s.busy && snapshot.reactionReady(at)) {
-            startupOffered = true
+        if ((!s.demo || ignition) && s.foreground && !startupOffered && !s.busy && snapshot.reactionReady(at)) {
+            startupOffered = true; ignition = false
             mutable.update { it.copy(startupPrompt = true) }
         }
-        val settings = if (s.demo) s.settings.copy(glassLevel = 2) else s.settings
-        val plan = engine.evaluate(snapshot, settings, at, enhanced, at < ventilationUntil)
+        val plan = engine.evaluate(snapshot, s.settings, at, enhanced, at < ventilationUntil)
         mutable.update { it.copy(now = at, snapshot = snapshot, plan = plan, reaction = reaction,
+            situation = if (it.situation == s.situation) situation else it.situation,
             enhanced = enhanced, showStimulus = evaluator.readyToShow(at) || reaction.phase == ReactionPhase.STIMULUS,
             problems = if (s.demo) emptyMap() else live?.problems?.value ?: mapOf("연결" to "Pleos 차량 환경에서 연결해 주세요"),
             reactions = if (reaction != s.reaction) store.reactions() else it.reactions) }
@@ -139,7 +150,8 @@ class CareController(private val app: Application) {
                 val interval = if (alert.urgent && enhanced) 15_000 else 30_000
                 if (at - (spokenAt["${s.demo}:${alert.id}"] ?: -60_000L) >= interval) {
                     spokenAt["${s.demo}:${alert.id}"] = at
-                    record(alert.title, alert.detail)
+                    // Induced situations stay out of the vehicle's 30-day headlight statistics.
+                    record(if (!s.demo && situation.active) "[유발] ${alert.title}" else alert.title, alert.detail)
                     if (s.settings.voice) voice.speak("${alert.title}. ${alert.detail}")
                 }
             }
@@ -150,9 +162,33 @@ class CareController(private val app: Application) {
         mutable.update { it.copy(foreground = value) }
         if (!value) { evaluator.cancel("화면을 벗어나 측정을 중단했습니다"); voice.stop() }
     }
+    /**
+     * Scenario trigger: induces the situation only. The app then detects it and runs its normal
+     * features (warning, voice, vehicle control with read-back) exactly as with vehicle signals.
+     */
+    fun trigger(value: Trigger) {
+        if (state.value.busy || closing) return
+        val at = now()
+        if (value != Trigger.RESET && !state.value.enabled) enable(true)
+        evaluator.cancel("상황이 바뀌어 측정을 중단했습니다")
+        if (state.value.demo) {
+            // The virtual vehicle returns to a parked, lights-off baseline; the situation is layered on top.
+            simulator.scenario = DemoScenario.PARKED; simulator.brakePressed = false; simulator.headlights = false
+        }
+        if (value == Trigger.IGNITION) { startupOffered = false; ignition = true }
+        if (value == Trigger.RESET) voice.stop()
+        // Ending the situation also ends its rain/tunnel hold timers; live vehicle signals are detected again at once.
+        if (value == Trigger.RESET || value == Trigger.IGNITION) engine = ContextEngine()
+        spokenAt.clear()
+        mutable.update { it.copy(situation = it.situation.after(value, at), lastTrigger = value,
+            scenario = DemoScenario.PARKED, startupPrompt = false) }
+        record("상황 유발", value.label)
+        tick()
+    }
     fun enable(value: Boolean) {
         val s = state.value
-        if (value && !s.demo && !s.canConfigure) { message("자동 케어는 P단·주차 브레이크·정차 확인 후 켤 수 있습니다"); return }
+        if (s.busy) return
+        autoEnable = false // An explicit choice replaces the automatic start.
         if (value && !s.demo && coordinator.pendingRestoration) { message("이전 설정 복원을 먼저 완료해 주세요"); return }
         mutable.update { it.copy(enabled = value) }
         if (!value) voice.stop()
@@ -161,14 +197,14 @@ class CareController(private val app: Application) {
     fun switchMode(demo: Boolean) {
         val s = state.value
         if (demo == s.demo || s.busy || closing) return
-        if (!s.demo && s.snapshot.moving(s.now)) { message("주행 중에는 모드를 바꿀 수 없습니다"); return }
-        mutable.update { it.copy(busy = true, enabled = false) }
+        autoEnable = false
+        mutable.update { it.copy(busy = true, enabled = false, situation = Situation(), lastTrigger = null) }
         evaluator.cancel(); voice.stop()
         work {
             try {
                 coordinator.reconcile(emptyMap(), now())
                 if (coordinator.pendingRestoration) {
-                    message("차량 설정 복원이 대기 중입니다. 연결을 유지한 뒤 다시 전환해 주세요")
+                    message("원래 차량 설정을 요청했습니다. 복원이 확인되면 다시 전환해 주세요")
                     mutable.update { it.copy(busy = false) }
                 } else {
                     // Release the previous SDK instance before constructing its replacement.
@@ -183,12 +219,13 @@ class CareController(private val app: Application) {
     }
     private fun finishSwitch(demo: Boolean) {
         live = null
-        engine = ContextEngine(); startupOffered = false; spokenAt.clear(); lastRecorded = null; ventilationUntil = Long.MIN_VALUE
+        engine = ContextEngine(); startupOffered = false; ignition = false; spokenAt.clear(); lastRecorded = null; ventilationUntil = Long.MIN_VALUE
         mutable.update { it.copy(demo = demo, enabled = demo, enhanced = false, busy = true,
             startupPrompt = false, statuses = emptyMap(), capabilities = emptyMap(), problems = emptyMap(), snapshot = VehicleSnapshot(),
-            settings = it.settings.copy(glassLevel = null), plan = CarePlan(), message = null, scenario = DemoScenario.PARKED) }
+            plan = CarePlan(), message = null, scenario = DemoScenario.PARKED) }
         evaluator = newEvaluator()
         store.saveInputMode(demo)
+        autoEnable = !demo
         if (demo) {
             simulator.scenario = DemoScenario.PARKED; simulator.brakePressed = false
             work { coordinator = coordinator(simulator, true); refreshCapabilities(simulator); mutable.update { it.copy(busy = false) } }
@@ -224,7 +261,7 @@ class CareController(private val app: Application) {
         simulator.scenario = value
         simulator.brakePressed = false
         simulator.headlights = value !in setOf(DemoScenario.NIGHT, DemoScenario.RAIN)
-        mutable.update { it.copy(scenario = value) }
+        mutable.update { it.copy(scenario = value, situation = Situation(), lastTrigger = null) }
         tick()
     }
     fun demoBrake(pressed: Boolean) { if (state.value.demo) { simulator.brakePressed = pressed; tick() } }
@@ -238,8 +275,11 @@ class CareController(private val app: Application) {
     fun testVoice() { if (state.value.canConfigure) voice.speak("꼼짝마차 음성 안내입니다. 전방을 살피고 여유 있게 출발하세요.") }
     fun prepareReaction() {
         dismissStartup()
+        if (evaluator.active) return
+        // The reaction check never runs on an induced situation: drop it and use the vehicle's own interlock.
         // Only the synthetic vehicle changes scenario; live parking signals are never overridden.
-        if (state.value.demo && !evaluator.active) scenario(DemoScenario.PARKED)
+        if (state.value.demo) scenario(DemoScenario.PARKED)
+        else if (state.value.situation.active) { mutable.update { it.copy(situation = Situation(), lastTrigger = null) }; tick() }
     }
     fun startReaction() {
         dismissStartup()

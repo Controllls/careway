@@ -32,6 +32,16 @@ class NativeTestRunner : Instrumentation() {
         val v=activity.screen.findViewWithTag<View>(tag) ?: error("Missing view: $tag")
         check(v.isEnabled) { "Disabled view: $tag" }; check(v.performClick())
     } }
+    /** Presses the virtual pedal on each of the three stimuli, releasing it between trials. */
+    private fun completeThreeTrials() {
+        fun phase()=activity.model.state.value.reaction.phase
+        repeat(3) { i ->
+            await("Animal draw must acknowledge stimulus ${i+1}",9000) { phase()==ReactionPhase.STIMULUS && activity.model.state.value.reaction.trial==i+1 }
+            Thread.sleep(250); click("demo_brake")
+            if(i<2) { await("Trial ${i+1} recorded") { phase()==ReactionPhase.REST }; click("demo_brake") }
+        }
+        await("Three-trial completion") { phase()==ReactionPhase.COMPLETE }
+    }
     private fun passed(name:String) { count++; sendStatus(0,Bundle().apply { putString("stream","PASS $name\n") }) }
     override fun onStart() {
         var code=Activity.RESULT_OK
@@ -46,11 +56,11 @@ class NativeTestRunner : Instrumentation() {
             // Start from driving/disconnected simulation, then use the actual dashboard button.
             ui { activity.model.scenario(DemoScenario.DISCONNECTED) }
             click("open_start_reaction")
-            await("Animal draw must acknowledge stimulus") { activity.model.state.value.reaction.phase==ReactionPhase.STIMULUS }
-            Thread.sleep(250); click("demo_brake")
-            await("Reaction completion") { activity.model.state.value.reaction.phase==ReactionPhase.COMPLETE }
+            completeThreeTrials()
             ui {
-                check(activity.model.state.value.reaction.reactionMs in 100L..5000L)
+                val result=activity.model.state.value.reaction
+                check(result.samples.size==3 && result.samples.all { it in 100L..5000L })
+                check(result.reactionMs==result.samples.sum()/3 && result.condition==Condition.of(result.reactionMs!!))
                 check(!activity.screen.findViewWithTag<Button>("start_reaction").isEnabled)
             }
             click("demo_brake")
@@ -70,12 +80,46 @@ class NativeTestRunner : Instrumentation() {
 
             ui { activity.screen.selectPage(0); activity.model.scenario(DemoScenario.RAIN); activity.model.demoHeadlights(true) }
             await("Rain applied",16000) { activity.model.state.value.values[Control.DEFROST]==1 }
-            ui { activity.model.scenario(DemoScenario.TUNNEL_EXIT) }
-            await("Glass simulation applied") { activity.model.state.value.values[Control.GLASS_FRONT]==2 }
+            ui { activity.model.scenario(DemoScenario.RAIN_TUNNEL); activity.model.demoHeadlights(true) }
+            await("Rain keeps fresh air near tunnel") { activity.model.state.value.plan.tunnelActive && activity.model.state.value.values[Control.RECIRCULATION]==0 }
             ui { activity.model.scenario(DemoScenario.CLEAR) }
             // Rain care deliberately remains active for 10 seconds after the last wet signal.
-            await("Controls restored after rain hold",16000) { activity.model.state.value.values[Control.GLASS_FRONT]==0 && activity.model.state.value.values[Control.DEFROST]==0 }
-            passed("rain / tunnel exit / restoration")
+            await("Controls restored after rain hold",16000) { activity.model.state.value.values[Control.DEFROST]==0 && activity.model.state.value.values[Control.MIRROR_LEFT]==0 }
+            passed("rain / tunnel priority / restoration")
+
+            // Scenario triggers induce the situation only; warning, control and restoration run on the feature path.
+            fun state()=activity.model.state.value
+            click("page_4"); click("trigger_NIGHT_DRIVE")
+            await("Full-screen headlight warning",8000) { activity.screen.warningView?.findViewWithTag<View>("headlight_warning")?.isShown==true }
+            ui { check(state().situation.active && state().plan.alerts.first().id=="headlights") }
+            await("Night ambient dimming",8000) { state().values[Control.AMBIENT]==0 }
+            uiAutomation.takeScreenshot()?.let { bitmap ->
+                targetContext.filesDir.resolve("native-headlight-warning.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) }; bitmap.recycle()
+            }
+            ui { check(activity.screen.warningView!!.findViewWithTag<View>("warning_headlight_on").performClick()) }
+            await("Headlight trigger clears warning") { activity.screen.warningView==null && state().plan.alerts.none { it.urgent } }
+            click("trigger_RAIN_START")
+            await("Rain trigger controls",16000) { val v=state().values
+                v[Control.DEFROST]==1 && v[Control.RECIRCULATION]==0 && v[Control.MIRROR_LEFT]==1 && v[Control.MIRROR_RIGHT]==1 && v[Control.AMBIENT]==0 }
+            click("trigger_TUNNEL_DRIVE")
+            await("Rain keeps fresh air inside tunnel window",16000) { state().plan.raining && state().plan.tunnelActive && state().values[Control.RECIRCULATION]==0 }
+            click("trigger_RESET"); click("trigger_TUNNEL_DRIVE")
+            await("Recirculation 100 m before tunnel entrance",16000) { state().plan.tunnelActive && state().values[Control.RECIRCULATION]==1 &&
+                state().snapshot.tunnel?.value?.let { it.phase==TunnelPhase.APPROACH && it.distanceM!!<=100.0 }==true }
+            await("Recirculation held after the entrance",16000) { state().situation.tunnelSince==null && state().plan.tunnelActive && state().values[Control.RECIRCULATION]==1 }
+            uiAutomation.takeScreenshot()?.let { bitmap ->
+                targetContext.filesDir.resolve("native-scenarios.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) }; bitmap.recycle()
+            }
+            await("Tunnel hold ends and restores settings",40000) { !state().plan.tunnelActive && state().values[Control.RECIRCULATION]==0 && state().values[Control.DEFROST]==0 }
+            click("trigger_RESET")
+            await("Reset returns to vehicle signals",8000) { !state().situation.active && state().values[Control.AMBIENT]==65 }
+            click("trigger_IGNITION")
+            await("Departure popup") { activity.screen.startupDialog?.isShowing==true }
+            ui { check(activity.screen.startupDialog!!.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()) }
+            await("Popup starts measurement") { activity.screen.page==1 && state().reaction.phase in listOf(ReactionPhase.WAITING,ReactionPhase.STIMULUS) }
+            completeThreeTrials()
+            click("demo_brake")
+            passed("scenario triggers: headlight warning / rain / tunnel entrance / departure check")
 
             ui { activity.screen.selectPage(2) }
             check(CareStore(targetContext).reactions().any { it.demo && it.durationMs!=null })
@@ -99,9 +143,13 @@ class NativeTestRunner : Instrumentation() {
                     s.speedMps?.fresh(at)!=null && s.gear?.fresh(at)!=null && s.brake?.fresh(at)!=null
                 }
                 val s=activity.model.state.value.snapshot
-                check(!activity.model.state.value.enabled) { "Live mode must not auto-enable control" }
+                // Care starts only after settings left by an earlier session are restored, which a slow vehicle can delay.
+                await("Vehicle connection starts care by itself",60000) { activity.model.state.value.enabled }
+                ui { activity.model.enable(false); check(!activity.model.state.value.enabled) { "Explicit stop must apply" } }
+                Thread.sleep(1500)
+                ui { check(!activity.model.state.value.enabled) { "Automatic start must run once per connection" } }
                 targetContext.filesDir.resolve("native-live.json").writeText(JSONObject().put("speed",s.speedMps?.value)
-                    .put("gear",s.gear?.value?.name).put("parking_brake",s.parkingBrake?.value).put("brake",s.brake?.value)
+                    .put("gear",s.gear?.value?.name).put("brake",s.brake?.value)
                     .put("problems",JSONObject(activity.model.state.value.problems)).toString(2))
             ui { activity.model.switchMode(true) }
             await("Return to demo releases old SDK connection",16000) { activity.model.state.value.demo && !activity.model.state.value.busy }

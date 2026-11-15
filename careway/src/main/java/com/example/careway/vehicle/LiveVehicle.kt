@@ -212,7 +212,6 @@ class LiveVehicle(context: Context) {
         val at = now()
         mutate { s -> when (p.propertyId) {
             VehiclePropertyIds.PERF_VEHICLE_SPEED -> s.copy(speedMps = (p.value as? Float)?.takeIf { it.isFinite() }?.let { Reading(it, at) })
-            VehiclePropertyIds.PARKING_BRAKE_ON -> s.copy(parkingBrake = (p.value as? Boolean)?.let { Reading(it, at) })
             VehiclePropertyIds.NIGHT_MODE -> s.copy(dark = (p.value as? Boolean)?.let { Reading(it, at) })
             VehiclePropertyIds.GEAR_SELECTION -> s.copy(gear = when (p.value as? Int) {
                 android.car.VehicleGear.GEAR_PARK -> Gear.PARK
@@ -228,7 +227,6 @@ class LiveVehicle(context: Context) {
     }
     private fun invalidate(id: Int) = mutate { s -> when (id) {
         VehiclePropertyIds.PERF_VEHICLE_SPEED -> s.copy(speedMps = null)
-        VehiclePropertyIds.PARKING_BRAKE_ON -> s.copy(parkingBrake = null)
         VehiclePropertyIds.NIGHT_MODE -> s.copy(dark = null)
         VehiclePropertyIds.GEAR_SELECTION -> s.copy(gear = null)
         else -> s
@@ -247,6 +245,6 @@ class LiveVehicle(context: Context) {
     }
     companion object {
         private val ids = listOf(VehiclePropertyIds.PERF_VEHICLE_SPEED, VehiclePropertyIds.GEAR_SELECTION,
-            VehiclePropertyIds.PARKING_BRAKE_ON, VehiclePropertyIds.NIGHT_MODE)
+            VehiclePropertyIds.NIGHT_MODE)
     }
 }
