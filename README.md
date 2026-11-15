@@ -33,6 +33,41 @@ adb shell am start --user current -n com.example.careway/.MainActivity
 
 반응 체크는 완전 정차·P단·UX 조작 허용·브레이크 이벤트 수신 조건에서 시작한다. 측정값에는 차량 신호 전달 지연이 포함된다.
 
+## Pleos Connect SDK 활용
+
+모든 핵심 기능이 Pleos SDK로 받은 차량 상태에서 시작해 Pleos SDK의 차량 제어와 음성으로 끝난다. 사용 버전은 Vehicle 2.3.2, NaviHelper 3.0.5, TextToSpeech 3.3.1이다.
+
+### 상황 인식 (입력)
+
+| 기능 | SDK · API | 권한 | 에뮬레이터 확인 |
+|---|---|---|---|
+| 세이프티 핏 반응 측정 | Vehicle `Brake.registerBrakePedalStatus`, `getCurrentBrakePedalStatus` | `pleos CAR_DRIVE` | 가상 콘솔 페달 입력으로 이벤트 수신 |
+| 스텔스 주행 감지 | Vehicle `Light.registerLowBeamLightState`, `getCurrentLowBeamLightState` | `pleos CAR_LIGHTS` | 콘솔에서 하향등을 켜고 끄면 앱에 반영 |
+| 빗길 감지 | Vehicle `Wiper.getCurrentWiperSwitch`, `registerWiperState`, `getCurrentWiperState` | `pleos CAR_WINDOWS` | 콘솔 Low/High가 연속 1단/3단으로 읽히고 빗길 케어 실행 |
+| 터널 접근 감지 | NaviHelper `addListener`, `onTBTInfo`, `getTBTInfo` (`TurnType.TURN_TUNNEL`, 입구 거리) | `pleos NAVI_ROUTE` | 안내 정보 조회·수신 확인. 터널 경로는 재현하지 못해 유발 입력으로 확인 |
+
+### 동작 (출력)
+
+| 기능 | SDK · API | 권한 | 에뮬레이터 확인 |
+|---|---|---|---|
+| 앞유리 김서림 제거 | Vehicle `HVAC.setHvacDefroster` | `pleos CONTROL_CAR_CLIMATE` | 적용 후 값 재조회로 확인 |
+| 내기 순환·외기 유입 | Vehicle `HVAC.setHvacRecirculation` | `pleos CONTROL_CAR_CLIMATE` | 적용·복원 모두 재조회로 확인 |
+| 공조 전원(환기) | Vehicle `HVAC.setHvacPower` | `pleos CONTROL_CAR_CLIMATE` | 이미 켜진 상태로 읽혀 그대로 유지. 값 변화는 미확인 |
+| 좌우 미러 열선 | Vehicle `SideMirror.setHvacSideMirrorHeat` | `pleos CONTROL_CAR_MIRRORS` | 양쪽 모두 적용 후 재조회로 확인 |
+| 실내 조명 감광 | Vehicle `Light.setAmbientLightBrightness` | `pleos CONTROL_CAR_LIGHTS` | 적용 후 재조회로 확인 |
+| 음성 안내 | TextToSpeech `speak` (`Mode.ON_DEVICE`, `Locale.KOREA`) | `pleos TTS_SERVICE` | 합성 완료 이벤트 수신 |
+
+### SDK를 쓰는 방식
+
+- **지원 여부를 먼저 확인한다.** 제어와 조회 전에 `checkXXXCapabilities`로 접근 유형·대상 영역·값 범위를 확인하고, 지원하지 않는 차량에서는 제어하지 않고 안내만 한다.
+- **요청 응답만으로 성공이라 하지 않는다.** `set` 호출 뒤 같은 항목의 `get`으로 차량 값을 다시 읽어, 바뀐 것을 확인했을 때만 적용 완료로 표시한다.
+- **바꾼 설정은 되돌린다.** 제어 전 값을 저장해 두고 상황이 끝나거나 화면을 벗어나면 복원한다. 앱이 강제 종료돼도 다음 연결에서 복원한다.
+- **운전자 조작이 우선이다.** 자동 제어한 값을 운전자가 직접 바꾸면 그 상황이 끝날 때까지 다시 건드리지 않는다.
+- **리스너와 조회를 함께 쓴다.** 상태 변화는 리스너로 받고 주기 조회로 누락을 보완한다. 반응 시간은 브레이크 리스너 이벤트의 수신 시각으로만 계산한다.
+- **SDK 호출은 작업 스레드에서 시간 제한을 두고 실행한다.** 응답이 없거나 오류가 나면 해당 입력을 ‘미확인’으로 처리하고, 미확인 입력으로는 차량을 제어하지 않는다.
+- **표준 우선 정책을 따른다.** 차속·기어·야간 여부처럼 AAOS 표준에 있는 정보는 Pleos 정책대로 AAOS `CarPropertyManager`로 읽고, Pleos 전용 영역만 SDK를 쓴다.
+- **연결을 정리한다.** 화면 종료 시 리스너를 해제하고 `Vehicle`·`NaviHelper`·`TextToSpeech`를 `release`한다.
+
 ## 화면
 
 ### 홈 · 서비스 현황판
